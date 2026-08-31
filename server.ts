@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import path from 'path';
 
 dotenv.config();
 
@@ -781,6 +782,13 @@ app.post('/api/stripe/verify-session', async (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Verification failed.' });
   }
+});
+
+// SERVE FRONTEND STATIC FILES & SPA FALLBACK
+app.use(express.static(path.join(process.cwd(), 'dist')));
+
+app.get('*', (req: Request, res: Response) => {
+  res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
 });
 
 app.listen(PORT, () => {
