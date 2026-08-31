@@ -1,0 +1,6 @@
+{
+  "name": "HookViral AI",
+  "description": "Viral hook & high-retention video prompt generator with Fal AI video rendering, free trial, and Stripe/AirTM paywall.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
