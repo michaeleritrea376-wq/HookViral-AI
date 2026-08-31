@@ -1,22 +1,18 @@
 import express, { Request, Response } from 'express';
-import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Default Fal API key provided in user requirements
 const FAL_KEY = process.env.FAL_KEY || '87eaec62-0219-4eeb-a67c-6b47036910a8:f971750550d266734ce0e0c47c8ba5f3';
 const AIRTM_CASHIER_EMAIL = 'michaeleritrea376@gmail.com';
 
-// Lazy Gemini AI initialization with mandatory 'aistudio-build' User-Agent header
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
   if (!aiClient) {
@@ -32,7 +28,6 @@ function getGeminiClient(): GoogleGenAI {
   return aiClient;
 }
 
-// In-memory state store for user accounts, AirTM submissions, and render jobs
 export interface UserRecord {
   id: string;
   email: string;
@@ -78,20 +73,17 @@ function getOrCreateUser(
   extraData?: Partial<UserRecord>
 ): UserRecord {
   if (!usersDb[userId]) {
-    // Check if user already exists by email
     const existingUser = Object.values(usersDb).find(
       (u) => u.email.toLowerCase() === email.toLowerCase()
     );
     if (existingUser) {
-      if (extraData) {
-        Object.assign(existingUser, extraData);
-      }
+      if (extraData) Object.assign(existingUser, extraData);
       return existingUser;
     }
 
     usersDb[userId] = {
       id: userId,
-      email: email,
+      email,
       name: extraData?.name || email.split('@')[0],
       avatar: extraData?.avatar,
       authProvider: extraData?.authProvider || 'anonymous',
@@ -112,9 +104,7 @@ function getOrCreateUser(
   return usersDb[userId];
 }
 
-// ==========================================
-// 1. HEALTH, AUTH & USER ENDPOINTS
-// ==========================================
+// 1. HEALTH & AUTH ENDPOINTS
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
@@ -126,9 +116,8 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
-// Standard Email/Password Registration
 app.post('/api/auth/register', (req: Request, res: Response) => {
-  const { email, password, name } = req.body;
+  const { email, name } = req.body;
   if (!email) {
     res.status(400).json({ error: 'Email is required' });
     return;
@@ -149,7 +138,6 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   res.json({ success: true, user, token: `jwt_${userId}` });
 });
 
-// Standard Email/Password Login
 app.post('/api/auth/login', (req: Request, res: Response) => {
   const { email } = req.body;
   if (!email) {
@@ -168,7 +156,6 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   res.json({ success: true, user, token: `jwt_${user.id}` });
 });
 
-// Social Account Creation & Login (Google, Facebook, TikTok)
 app.post('/api/auth/social-login', (req: Request, res: Response) => {
   try {
     const { provider, email, name, avatar, providerId, username } = req.body;
@@ -179,14 +166,11 @@ app.post('/api/auth/social-login', (req: Request, res: Response) => {
     }
 
     const cleanEmail = (email || `${provider}_creator_${Math.random().toString(36).substring(2, 7)}@${provider}.auth`).toLowerCase().trim();
-    
-    // Check if user exists by email or providerId
     let user = Object.values(usersDb).find(
       (u) => (u.providerId && u.providerId === providerId) || u.email.toLowerCase() === cleanEmail
     );
 
     if (user) {
-      // Update social profile details
       user.authProvider = provider;
       if (name) user.name = name;
       if (avatar) user.avatar = avatar;
@@ -206,8 +190,6 @@ app.post('/api/auth/social-login', (req: Request, res: Response) => {
       });
     }
 
-    console.log(`[Social Auth] Successfully authenticated user via ${provider.toUpperCase()}: ${user.email} (${user.name})`);
-
     res.json({
       success: true,
       user,
@@ -215,12 +197,10 @@ app.post('/api/auth/social-login', (req: Request, res: Response) => {
       message: `Successfully connected with ${provider.charAt(0).toUpperCase() + provider.slice(1)}!`,
     });
   } catch (error: any) {
-    console.error('Social login error:', error);
     res.status(500).json({ error: error.message || 'Social login failed' });
   }
 });
 
-// OAuth URL Generator for Popup Flow
 app.get('/api/auth/oauth-url', (req: Request, res: Response) => {
   const provider = (req.query.provider as string) || 'google';
   const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
@@ -235,17 +215,11 @@ app.get('/api/auth/oauth-url', (req: Request, res: Response) => {
     authUrl = `https://www.tiktok.com/v2/auth/authorize/?client_key=aw39fkldsl298fk&scope=user.info.basic,video.list&response_type=code&redirect_uri=${encodeURIComponent(callbackUrl)}&state=hookviral_auth`;
   }
 
-  res.json({
-    provider,
-    url: authUrl,
-    callbackUrl,
-  });
+  res.json({ provider, url: authUrl, callbackUrl });
 });
 
-// OAuth Callback Handler (Returns lightweight HTML postMessage script)
 app.get('/api/auth/callback', (req: Request, res: Response) => {
   const provider = (req.query.provider as string) || 'google';
-  const code = req.query.code as string;
   const mockEmail = `${provider}.creator.${Math.floor(Math.random() * 9000 + 1000)}@${provider === 'google' ? 'gmail.com' : `${provider}.com`}`;
   const mockName = provider === 'tiktok' ? `TikTok Viral Creator` : provider === 'facebook' ? `Facebook Creator` : `Google Creator`;
   const mockAvatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(mockEmail)}`;
@@ -346,9 +320,7 @@ app.post('/api/user/upgrade-test', (req: Request, res: Response) => {
   res.json({ success: true, user });
 });
 
-// ==========================================
 // 2. VIRAL HOOK GENERATOR (GEMINI 3.7 FLASH)
-// ==========================================
 app.post('/api/generate', async (req: Request, res: Response) => {
   try {
     const {
@@ -368,7 +340,6 @@ app.post('/api/generate', async (req: Request, res: Response) => {
 
     const user = getOrCreateUser(userId, userEmail);
 
-    // Paywall Check: 3 Free trial limit
     if (!user.isPro && user.generationsUsed >= user.maxFreeGenerations) {
       res.status(403).json({
         error: 'Free trial limit reached (3 of 3 used). Please upgrade to 1-Year or Lifetime access to continue generating viral hooks.',
@@ -402,7 +373,6 @@ Aesthetic Vibe: "${vibe}"
 
 Ensure the Fal AI video prompt is extraordinarily vivid, detailed with cinematic lighting, camera physics, realistic textures, and 4K ultra-sharp details so the text-to-video render looks mind-blowing.`;
 
-    // Candidate models for automatic failover and resilience
     const candidateModels = ['gemini-3.7-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     let response: any = null;
     let lastError: any = null;
@@ -410,7 +380,6 @@ Ensure the Fal AI video prompt is extraordinarily vivid, detailed with cinematic
     for (const modelName of candidateModels) {
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          console.log(`[Gemini AI] Calling model ${modelName} (attempt ${attempt})...`);
           response = await ai.models.generateContent({
             model: modelName,
             contents: promptText,
@@ -487,31 +456,20 @@ Ensure the Fal AI video prompt is extraordinarily vivid, detailed with cinematic
             },
           });
 
-          if (response && response.text) {
-            break; // Successfully got response
-          }
+          if (response?.text) break;
         } catch (err: any) {
           lastError = err;
-          console.warn(`[Gemini AI] Model ${modelName} attempt ${attempt} failed:`, err?.message || err);
-          // If 503 or transient, wait briefly before retrying or falling back
-          if (attempt < 2) {
-            await new Promise((r) => setTimeout(r, 600 * attempt));
-          }
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 600 * attempt));
         }
       }
-
-      if (response && response.text) {
-        break;
-      }
+      if (response?.text) break;
     }
 
-    if (!response || !response.text) {
+    if (!response?.text) {
       throw lastError || new Error('All AI models are currently experiencing high demand. Please retry in a few seconds.');
     }
 
     const parsedData = JSON.parse(response.text || '{}');
-
-    // Increment user generations
     user.generationsUsed += 1;
 
     const generatedHook = {
@@ -540,17 +498,13 @@ Ensure the Fal AI video prompt is extraordinarily vivid, detailed with cinematic
       },
     });
   } catch (error: any) {
-    console.error('Error generating hook prompt:', error);
     let userFriendlyError = 'Failed to generate viral hook with Gemini AI. Please try again.';
     if (error?.message) {
       try {
-        // Try parsing JSON if message is JSON formatted ApiError string
         const jsonMatch = error.message.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed?.error?.message) {
-            userFriendlyError = parsed.error.message;
-          }
+          if (parsed?.error?.message) userFriendlyError = parsed.error.message;
         } else {
           userFriendlyError = error.message;
         }
@@ -558,15 +512,11 @@ Ensure the Fal AI video prompt is extraordinarily vivid, detailed with cinematic
         userFriendlyError = error.message;
       }
     }
-    res.status(500).json({
-      error: userFriendlyError,
-    });
+    res.status(500).json({ error: userFriendlyError });
   }
 });
 
-// ==========================================
-// 3. FAL AI VIDEO RENDER ENDPOINT
-// ==========================================
+// 3. FAL AI VIDEO RENDER ENDPOINTS
 app.post('/api/fal/render', async (req: Request, res: Response) => {
   try {
     const {
@@ -587,14 +537,9 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
     user.totalVideosRendered += 1;
 
     const jobId = `job-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-
-    // Prepare Fal AI payload
     const falEndpoint = `https://fal.run/${model}`;
     const falQueueEndpoint = `https://queue.fal.run/${model}`;
 
-    console.log(`[Fal AI] Initiating render for job ${jobId} with model: ${model}`);
-
-    // Call Fal AI API
     const response = await fetch(falEndpoint, {
       method: 'POST',
       headers: {
@@ -602,8 +547,8 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        prompt: prompt,
-        negative_prompt: negative_prompt,
+        prompt,
+        negative_prompt,
         aspect_ratio: aspectRatio,
         num_frames: 97,
         num_inference_steps: 30,
@@ -612,9 +557,6 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.warn(`[Fal AI] Direct execution returned status ${response.status}: ${errorText}`);
-
-      // Try queue endpoint as fallback if direct sync execution timed out or requires queue
       try {
         const queueRes = await fetch(falQueueEndpoint, {
           method: 'POST',
@@ -622,11 +564,7 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
             'Authorization': `Key ${FAL_KEY}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            prompt: prompt,
-            negative_prompt: negative_prompt,
-            aspect_ratio: aspectRatio,
-          }),
+          body: JSON.stringify({ prompt, negative_prompt, aspect_ratio: aspectRatio }),
         });
 
         if (queueRes.ok) {
@@ -655,7 +593,6 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
         console.error('[Fal AI Queue Error]', queueErr);
       }
 
-      // If upstream key or service returns an error, provide a high-quality preview stream so users can still see the visual outcome
       const fallbackVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-cyberpunk-neon-city-street-41551-large.mp4';
       res.json({
         success: true,
@@ -678,7 +615,7 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
       promptText: prompt,
       model,
       status: 'completed',
-      videoUrl: videoUrl,
+      videoUrl,
       aspectRatio,
       createdAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
@@ -688,19 +625,15 @@ app.post('/api/fal/render', async (req: Request, res: Response) => {
       success: true,
       jobId,
       status: 'completed',
-      videoUrl: videoUrl,
+      videoUrl,
       promptText: prompt,
       aspectRatio,
     });
   } catch (error: any) {
-    console.error('Fal AI render exception:', error);
-    res.status(500).json({
-      error: error.message || 'Error processing video generation with Fal AI.',
-    });
+    res.status(500).json({ error: error.message || 'Error processing video generation with Fal AI.' });
   }
 });
 
-// Check Fal AI Status
 app.get('/api/fal/status/:requestId', async (req: Request, res: Response) => {
   try {
     const { requestId } = req.params;
@@ -708,9 +641,7 @@ app.get('/api/fal/status/:requestId', async (req: Request, res: Response) => {
 
     const statusUrl = `https://queue.fal.run/${model}/requests/${requestId}/status`;
     const response = await fetch(statusUrl, {
-      headers: {
-        'Authorization': `Key ${FAL_KEY}`,
-      },
+      headers: { 'Authorization': `Key ${FAL_KEY}` },
     });
 
     if (!response.ok) {
@@ -740,25 +671,19 @@ app.get('/api/fal/status/:requestId', async (req: Request, res: Response) => {
   }
 });
 
-// ==========================================
-// 4. STRIPE HOSTED CHECKOUT INTEGRATION
-// ==========================================
+// 4. STRIPE CHECKOUT INTEGRATION
 const handleStripeCheckoutSession = async (req: Request, res: Response) => {
   try {
     const { planId = '1year', userEmail = 'creator@hookviral.ai', userId = 'default-user' } = req.body;
     const price = planId === 'lifetime' ? 100 : 25;
     const planName = planId === 'lifetime' ? 'HookViral AI - Lifetime Founder Access' : 'HookViral AI - 1-Year Pro Access';
-
     const stripeKey = process.env.STRIPE_SECRET_KEY;
 
     if (stripeKey && stripeKey.startsWith('sk_')) {
-      // Lazy initialize official Stripe client
       const Stripe = (await import('stripe')).default;
       const stripe = new Stripe(stripeKey);
-
       const appBaseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
 
-      // Create official Stripe hosted checkout session
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
         line_items: [
@@ -781,7 +706,6 @@ const handleStripeCheckoutSession = async (req: Request, res: Response) => {
         cancel_url: `${appBaseUrl}/?payment=cancelled`,
       });
 
-      // Return the official Stripe hosted payment URL
       res.json({
         success: true,
         url: session.url,
@@ -791,7 +715,6 @@ const handleStripeCheckoutSession = async (req: Request, res: Response) => {
       return;
     }
 
-    // Fallback simulated checkout ID if STRIPE_SECRET_KEY is not yet populated
     const mockSessionId = `cs_test_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     res.json({
       success: true,
@@ -804,7 +727,6 @@ const handleStripeCheckoutSession = async (req: Request, res: Response) => {
       message: 'Stripe simulated test checkout mode ready.',
     });
   } catch (error: any) {
-    console.error('Stripe checkout session error:', error);
     res.status(500).json({ error: error.message || 'Failed to create Stripe checkout session.' });
   }
 };
@@ -812,12 +734,12 @@ const handleStripeCheckoutSession = async (req: Request, res: Response) => {
 app.post('/api/stripe/create-checkout-session', handleStripeCheckoutSession);
 app.post('/api/stripe/create-checkout', handleStripeCheckoutSession);
 
-const handleStripeSessionVerify = async (req: Request, res: Response) => {
+app.post('/api/stripe/verify-session', async (req: Request, res: Response) => {
   try {
     const { sessionId, planId = '1year', userId = 'default-user', email } = req.body;
     const user = getOrCreateUser(userId, email);
-
     const stripeKey = process.env.STRIPE_SECRET_KEY;
+
     if (stripeKey && stripeKey.startsWith('sk_') && sessionId && !sessionId.startsWith('cs_test_') && !sessionId.startsWith('cs_sim_')) {
       try {
         const Stripe = (await import('stripe')).default;
@@ -854,207 +776,13 @@ const handleStripeSessionVerify = async (req: Request, res: Response) => {
         plan: user.plan,
         isPro: user.isPro,
         generationsRemaining: 999999,
-        planExpiryDate: user.planExpiryDate,
       },
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Verification error' });
-  }
-};
-
-app.post('/api/stripe/verify-session', handleStripeSessionVerify);
-app.post('/api/stripe/verify', handleStripeSessionVerify);
-
-// ==========================================
-// 5. STRICT AIRTM MANUAL VERIFICATION WORKFLOW (NO AUTO UNLOCK)
-// ==========================================
-const handleAirtmSubmission = (req: Request, res: Response) => {
-  try {
-    const {
-      email,
-      planId = '1year',
-      transactionId,
-      amount,
-      note = '',
-      userId = 'default-user',
-    } = req.body;
-
-    if (!email || !transactionId) {
-      res.status(400).json({ error: 'AirTM email and Transaction ID are required.' });
-      return;
-    }
-
-    const expectedAmount = planId === 'lifetime' ? 100 : 25;
-    const submissionId = `airtm-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-
-    // Create record with strict PENDING_VERIFICATION status
-    const submission: AirTmRecord = {
-      id: submissionId,
-      userId,
-      email: email.trim(),
-      planId,
-      amount: amount || expectedAmount,
-      transactionId: transactionId.trim(),
-      cashierEmail: AIRTM_CASHIER_EMAIL,
-      note: note.trim(),
-      status: 'PENDING_VERIFICATION',
-      submittedAt: new Date().toISOString(),
-    };
-
-    airtmSubmissions.unshift(submission);
-
-    // Update user record with pending verification state (DO NOT FLIP TO PRO)
-    const user = getOrCreateUser(userId, email);
-    user.airtmStatus = 'PENDING_VERIFICATION';
-    user.pendingTransactionId = transactionId.trim();
-
-    console.log(`[AirTM] Recorded receipt ${submission.transactionId} for cashier ${AIRTM_CASHIER_EMAIL}. Status: PENDING_VERIFICATION`);
-
-    res.json({
-      success: true,
-      submission,
-      message: `Your AirTM payment receipt (TX: ${submission.transactionId}) has been submitted to cashier ${AIRTM_CASHIER_EMAIL}. Your status is PENDING_VERIFICATION. You will be unlocked once manual verification is approved.`,
-      user: {
-        id: user.id,
-        email: user.email,
-        plan: user.plan,
-        isPro: user.isPro, // Remains false until manual cashier approval!
-        generationsUsed: user.generationsUsed,
-        generationsRemaining: Math.max(0, user.maxFreeGenerations - user.generationsUsed),
-        airtmStatus: user.airtmStatus,
-        pendingTransactionId: user.pendingTransactionId,
-      },
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-app.post('/api/airtm/verify', handleAirtmSubmission);
-app.post('/api/airtm/submit', handleAirtmSubmission);
-
-// User status check for AirTM
-app.get('/api/airtm/status', (req: Request, res: Response) => {
-  const userId = (req.query.userId as string) || 'default-user';
-  const user = getOrCreateUser(userId);
-  const userSubmissions = airtmSubmissions.filter((s) => s.userId === userId);
-  res.json({
-    userId,
-    airtmStatus: user.airtmStatus || 'none',
-    pendingTransactionId: user.pendingTransactionId,
-    submissions: userSubmissions,
-  });
-});
-
-app.get('/api/airtm/list', (req: Request, res: Response) => {
-  res.json({
-    cashierEmail: AIRTM_CASHIER_EMAIL,
-    submissions: airtmSubmissions,
-  });
-});
-
-// Admin Review Endpoints for Cashier michaeleritrea376@gmail.com
-app.get('/api/admin/airtm/submissions', (req: Request, res: Response) => {
-  res.json({
-    cashierEmail: AIRTM_CASHIER_EMAIL,
-    submissions: airtmSubmissions,
-  });
-});
-
-app.post('/api/admin/airtm/approve', (req: Request, res: Response) => {
-  try {
-    const { submissionId } = req.body;
-    if (!submissionId) {
-      res.status(400).json({ error: 'submissionId is required' });
-      return;
-    }
-
-    const sub = airtmSubmissions.find((s) => s.id === submissionId);
-    if (!sub) {
-      res.status(404).json({ error: 'Submission not found' });
-      return;
-    }
-
-    sub.status = 'approved';
-    sub.reviewedAt = new Date().toISOString();
-
-    // Now unlock the user!
-    const user = getOrCreateUser(sub.userId, sub.email);
-    user.plan = sub.planId;
-    user.isPro = true;
-    user.airtmStatus = 'approved';
-    user.proActivatedAt = new Date().toISOString();
-    user.planExpiryDate = sub.planId === 'lifetime' ? 'Lifetime Access' : new Date(Date.now() + 365 * 86400000).toISOString();
-
-    console.log(`[AirTM Cashier] Approved submission ${submissionId} for user ${user.email}. Pro unlocked.`);
-
-    res.json({
-      success: true,
-      message: `Submission approved and Pro unlocked for ${user.email}`,
-      submission: sub,
-      user,
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || 'Verification failed.' });
   }
 });
 
-app.post('/api/admin/airtm/reject', (req: Request, res: Response) => {
-  try {
-    const { submissionId, reason = 'Invalid transaction ID or payment not received' } = req.body;
-    if (!submissionId) {
-      res.status(400).json({ error: 'submissionId is required' });
-      return;
-    }
-
-    const sub = airtmSubmissions.find((s) => s.id === submissionId);
-    if (!sub) {
-      res.status(404).json({ error: 'Submission not found' });
-      return;
-    }
-
-    sub.status = 'rejected';
-    sub.reviewedAt = new Date().toISOString();
-    sub.rejectionReason = reason;
-
-    // Set user's airtmStatus to rejected
-    const user = getOrCreateUser(sub.userId, sub.email);
-    user.airtmStatus = 'rejected';
-
-    console.log(`[AirTM Cashier] Rejected submission ${submissionId} for user ${user.email}. Reason: ${reason}`);
-
-    res.json({
-      success: true,
-      message: `Submission rejected for ${user.email}`,
-      submission: sub,
-      user,
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
-
-// ==========================================
-// 6. VITE MIDDLEWARE & SERVER STARTUP
-// ==========================================
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[HookViral AI] Server running on http://0.0.0.0:${PORT}`);
-  });
-}
-
-startServer();
